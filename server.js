@@ -1,9 +1,9 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const dfd = require('danfojs-node');  
+const dfd = require('danfojs-node');
 const fs = require('fs').promises;
-const Papa = require('papaparse'); 
+const Papa = require('papaparse');
 
 const app = express();
 const PORT = 2006;
@@ -28,76 +28,64 @@ app.post('/upload', upload.single('csvfile'), async (req, res) => {
   try {
     const filePath = path.join(__dirname, 'uploads', req.file.filename);
     
-    // Read the CSV file as a string
     const csvData = await fs.readFile(filePath, 'utf-8');
     
     const parsedData = Papa.parse(csvData, {
-      header: true,  // Parse the first row as headers
-      skipEmptyLines: true
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: true
     });
 
-    // Ensure the parsed data is an array before creating DataFrame
+    // Create DataFrame from parsed data
     const df = new dfd.DataFrame(parsedData.data);
 
-    // Convert 'Hours_Studied' to numeric values
-    df['Hours_Studied'] = df['Hours_Studied'].apply(val => parseFloat(val));
+    console.log("DataFrame columns:", df.columns);
+    console.log("DataFrame shape:", df.shape);
 
-    // Drop rows with NaN values
-    df.dropna({ axis: 0, inplace: true });
+    // Convert 'Hours_Studied' to float32
+    if (df.columns.includes('Hours_Studied')) {
+      df['Hours_Studied'] = df['Hours_Studied'].asType('float32');
+    } else {
+      throw new Error("'Hours_Studied' column not found in the CSV file");
+    }
 
-    // Calculate mean, variance, and standard deviation
-    const mean = df['Hours_Studied'].mean();
-    const variance = df['Hours_Studied'].apply(val => Math.pow(val - mean, 2)).mean();
-    const std = Math.sqrt(variance);
+    // Manually drop rows with NaN values
+    const cleanedData = df.values.filter(row => !row.includes(NaN));
+    const cleanedDf = new dfd.DataFrame(cleanedData, { columns: df.columns });
+    
+    if (cleanedDf.shape[0] === 0) {
+      throw new Error("No data left after dropping NaN values");
+    }
+
+    console.log("Cleaned DataFrame shape:", cleanedDf.shape);
+
+    // Calculate mean, standard deviation, and variance
+    const mean = cleanedDf['Hours_Studied'].mean();
+    const std = cleanedDf['Hours_Studied'].std();
+    const variance = Math.pow(std, 2);
 
     console.log('Mean:', mean);
     console.log('Standard Deviation:', std);
     console.log('Variance:', variance);
 
     // Normalize 'Hours_Studied' column
-    const normalizedValues = df['Hours_Studied'].values.map(val => {
-      if (isNaN(mean) || isNaN(std) || std === 0) {
-        return NaN;  // Handle cases where std is zero or mean/std is NaN
-      }
-      return (val - mean) / std;
-    });
-
-    if (normalizedValues.some(isNaN)) {
-      throw new Error("Normalized values contain NaN.");
-    }
-
-    // Create a new Series for the normalized values
-    const normalizedSeries = new dfd.Series(normalizedValues, { name: 'normalized_Hours_Studied' });
+    const normalizedSeries = cleanedDf['Hours_Studied'].sub(mean).div(std);
 
     // Add the normalized column to the DataFrame
-    df.addColumn('normalized_Hours_Studied', normalizedSeries);
-    // df['normalized_Hours_Studied'] = normalizedSeries;
+    cleanedDf.addColumn('normalized_Hours_Studied', normalizedSeries.values, {inplace: true});
 
-    // console.log(df['normalized_Hours_Studied']);
+    // Convert DataFrame to JSON
+    const jsonData = cleanedDf.toJSON();
 
-    // Manually construct JSON data
-    const columns = df.columns;
-    const data = df.values;
-
-    const jsonData = data.map(row => {
-      let obj = {};
-      columns.forEach((col, i) => {
-        obj[col] = row[i];
-      });
-      return obj;
-    });
-
-    // Save preprocessed data for use in visualization
+    // Save preprocessed data
     const outputPath = path.join(__dirname, 'uploads', 'processed_data.json');
     await fs.writeFile(outputPath, JSON.stringify(jsonData, null, 2));
 
-
     // Redirect to the visualization page
     res.redirect('/visualization');
-
   } catch (error) {
-    console.error(error);
-    res.status(500).send("Error processing the file.");
+    console.error("Error processing the file:", error);
+    res.status(500).send("Error processing the file: " + error.message);
   }
 });
 
@@ -106,14 +94,10 @@ app.get('/visualization', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'visualization.html'));
 });
 
-app.get('/processed-data', (req, res) => {
+app.get('/processed-data', async (req, res) => {
   const outputPath = path.join(__dirname, 'uploads', 'processed_data.json');
-  fs.readFile(outputPath, 'utf8', (err, data) => {
-    if (err) {
-      return res.status(500).send("Error loading processed data.");
-    }
-    res.json(JSON.parse(data));
-  });
+  const data = await fs.readFile(outputPath, 'utf8');
+  res.status(200).send(data);
 });
 
 // Start the server
