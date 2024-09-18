@@ -12,4 +12,10 @@
 
 1. Using the training set, train several sequential classifiers (RNNs, LSTM, BiLSTM, GRU).
 2. Evaluate their performance on the test set 
-3. comment on the performance of the classifiers, and on the learned representations by these classifiers. 
+3. comment on the performance of the classifiers, and on the learned representations by these classifiers.
+
+## Solution
+
+~~ Normalized Hours Studied ~~
+
+<img width="1440" alt="Screenshot 2024-09-18 at 3 32 41 PM" src="https://github.com/user-attachments/assets/9df0eef4-e98b-4372-9c98-7c088e7619f1">
